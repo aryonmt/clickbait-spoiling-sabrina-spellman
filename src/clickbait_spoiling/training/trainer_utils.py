@@ -1,14 +1,15 @@
+import inspect
+
 import numpy as np
 import torch
 from sklearn.utils.class_weight import compute_class_weight
-from transformers import TrainingArguments
+from transformers import Trainer, TrainingArguments
 
 
 def get_training_args(cfg: dict, output_dir: str) -> TrainingArguments:
     """Build a transformers.TrainingArguments from a parsed YAML config dict.
     Supports both old (evaluation_strategy) and modern (eval_strategy) transformers APIs.
     """
-    # Detect the correct strategy parameter key for newer transformers versions
     eval_strategy_val = cfg.get(
         "eval_strategy", cfg.get("evaluation_strategy", "epoch")
     )
@@ -43,3 +44,23 @@ def compute_class_weights(labels: list, num_labels: int = 3) -> torch.Tensor:
         class_weight="balanced", classes=classes, y=clean_labels
     )
     return torch.tensor(weights, dtype=torch.float32)
+
+
+def build_trainer_kwargs(
+    model, training_args, train_dataset, eval_dataset, tokenizer, callbacks
+) -> dict:
+    """Build kwargs for HF Trainer supporting both old (<4.46) and new (>=4.46) transformers versions."""
+    kwargs = {
+        "model": model,
+        "args": training_args,
+        "train_dataset": train_dataset,
+        "eval_dataset": eval_dataset,
+        "callbacks": callbacks,
+    }
+    # Inspect Trainer.__init__ signature to see if modern 'processing_class' parameter is used
+    sig = inspect.signature(Trainer.__init__)
+    if "processing_class" in sig.parameters:
+        kwargs["processing_class"] = tokenizer
+    else:
+        kwargs["tokenizer"] = tokenizer
+    return kwargs

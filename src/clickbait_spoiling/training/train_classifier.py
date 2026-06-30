@@ -16,6 +16,7 @@ from clickbait_spoiling.training.callbacks import (
     GpuMemoryLoggingCallback,
 )
 from clickbait_spoiling.training.trainer_utils import (
+    build_trainer_kwargs,
     compute_class_weights,
     get_training_args,
 )
@@ -31,7 +32,9 @@ class WeightedLossTrainer(Trainer):
         super().__init__(*args, **kwargs)
         self.class_weights = class_weights.to(self.args.device)
 
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def compute_loss(
+        self, model, inputs, return_outputs=False, num_items_in_batch=None
+    ):
         labels = inputs.get("labels")
         outputs = model(**inputs)
         logits = outputs.get("logits")
@@ -61,38 +64,30 @@ def main():
     )
     args = parser.parse_args()
 
-    # Load configuration
     with open(args.config, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
-    # Setup Logging
     setup_logging(cfg.get("log_dir", "outputs/logs"), "train_classifier")
     logger.info("Initializing Task 1 Sequence Classifier Training...")
 
-    # Set reproducibility seeds
     set_global_seed(cfg.get("seed", 42))
 
-    # Load datasets
     train_posts = load_split(args.train_path)
     val_posts = load_split(args.val_path)
     logger.info(
         f"Loaded {len(train_posts)} train posts and {len(val_posts)} validation posts."
     )
 
-    # Convert to classification datasets
     train_data = [build_classification_example(p) for p in train_posts]
     val_data = [build_classification_example(p) for p in val_posts]
 
-    # Convert to HF Dataset object
     train_ds = datasets.Dataset.from_list(train_data)
     val_ds = datasets.Dataset.from_list(val_data)
 
-    # Load Model and Tokenizer
     model, tokenizer = build_classifier(
         cfg.get("model_name", "deberta-base"), num_labels=int(cfg.get("num_labels", 3))
     )
 
-    # Tokenization preprocessing
     def tokenize_fn(examples):
         return tokenizer(
             examples["text"],
@@ -104,14 +99,12 @@ def main():
     train_tokenized = train_ds.map(tokenize_fn, batched=True)
     val_tokenized = val_ds.map(tokenize_fn, batched=True)
 
-    # Compute class weights for imbalanced labels
     labels = [ex["label"] for ex in train_data]
     class_weights = compute_class_weights(
         labels, num_labels=int(cfg.get("num_labels", 3))
     )
     logger.info(f"Computed inverse-frequency class weights: {class_weights}")
 
-    # Build Trainer arguments
     training_args = get_training_args(cfg, args.output_dir)
 
     trainer_cls = WeightedLossTrainer if cfg.get("use_class_weights", True) else Trainer
@@ -119,20 +112,19 @@ def main():
         {"class_weights": class_weights} if cfg.get("use_class_weights", True) else {}
     )
 
-    trainer = trainer_cls(
+    # Build compatible trainer arguments
+    base_kwargs = build_trainer_kwargs(
         model=model,
-        args=training_args,
+        training_args=training_args,
         train_dataset=train_tokenized,
         eval_dataset=val_tokenized,
         tokenizer=tokenizer,
         callbacks=[CheckpointDiskBudgetCallback(), GpuMemoryLoggingCallback()],
-        **trainer_kwargs,
     )
 
-    # Train model
-    trainer.train()
+    trainer = trainer_cls(**base_kwargs, **trainer_kwargs)
 
-    # Save final best model configuration
+    trainer.train()
     trainer.save_model(os.path.join(args.output_dir, "best_model"))
     logger.info("Task 1 Classifier training successfully completed.")
 

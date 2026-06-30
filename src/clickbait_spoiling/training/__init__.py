@@ -3,6 +3,7 @@ from clickbait_spoiling.training.callbacks import (
     GpuMemoryLoggingCallback,
 )
 from clickbait_spoiling.training.trainer_utils import (
+    build_trainer_kwargs,
     compute_class_weights,
     get_training_args,
 )
@@ -10,6 +11,7 @@ from clickbait_spoiling.training.trainer_utils import (
 __all__ = [
     "get_training_args",
     "compute_class_weights",
+    "build_trainer_kwargs",
     "CheckpointDiskBudgetCallback",
     "GpuMemoryLoggingCallback",
 ]
