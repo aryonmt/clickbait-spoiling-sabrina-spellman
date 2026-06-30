@@ -1,0 +1,7 @@
+max_phrase_words: 5
+min_passage_words: 6
+max_multi_spoilers: 5
+max_multi_iterations: 7
+similarity_method: combined
+similarity_threshold: 0.7
+forbid_linebreak: true

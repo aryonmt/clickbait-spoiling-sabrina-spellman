@@ -5,10 +5,17 @@ from transformers import TrainingArguments
 
 
 def get_training_args(cfg: dict, output_dir: str) -> TrainingArguments:
-    """Build a transformers.TrainingArguments from a parsed YAML config dict."""
+    """Build a transformers.TrainingArguments from a parsed YAML config dict.
+    Supports both old (evaluation_strategy) and modern (eval_strategy) transformers APIs.
+    """
+    # Detect the correct strategy parameter key for newer transformers versions
+    eval_strategy_val = cfg.get(
+        "eval_strategy", cfg.get("evaluation_strategy", "epoch")
+    )
+
     return TrainingArguments(
         output_dir=output_dir,
-        evaluation_strategy=cfg.get("evaluation_strategy", "epoch"),
+        eval_strategy=eval_strategy_val,
         save_strategy=cfg.get("save_strategy", "epoch"),
         learning_rate=float(cfg.get("learning_rate", 2e-5)),
         per_device_train_batch_size=int(cfg.get("batch_size", 8)),

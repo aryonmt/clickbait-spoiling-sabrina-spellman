@@ -13,3 +13,5 @@ bert-score>=0.3.13
 rapidfuzz>=3.6
 pytest>=8.0
 torch>=2.2
+sentencepiece>=0.1.99
+protobuf>=3.20.3
