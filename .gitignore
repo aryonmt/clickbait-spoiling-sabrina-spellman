@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+build/
+dist/
+
+# Environments
+venv/
+.venv/
+.env
+
+# Data & artifacts (never versioned)
+data/raw/
+data/processed/
+data/external/
+outputs/
+*.ckpt
+*.bin
+*.safetensors
+*.pt
+wandb/
+.ipynb_checkpoints/
+
+# Kaggle credentials
+kaggle.json
+
+# Logs
+*.log
+logs/
