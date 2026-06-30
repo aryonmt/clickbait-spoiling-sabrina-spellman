@@ -3,7 +3,6 @@ import logging
 import os
 
 import datasets
-import torch
 import yaml
 from transformers import Trainer
 
@@ -17,33 +16,11 @@ from clickbait_spoiling.training.callbacks import (
 )
 from clickbait_spoiling.training.trainer_utils import (
     build_trainer_kwargs,
-    compute_class_weights,
     get_training_args,
 )
 from clickbait_spoiling.utils.seed import set_global_seed
 
 logger = logging.getLogger(__name__)
-
-
-class WeightedLossTrainer(Trainer):
-    """Subclass of Trainer to support class weights for imbalanced sequence classification.
-    Dynamically casts weights to match logits precision to prevent multi-GPU NCCL dtype conflicts.
-    """
-
-    def __init__(self, class_weights: torch.Tensor, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.class_weights = class_weights.to(self.args.device)
-
-    def compute_loss(
-        self, model, inputs, return_outputs=False, num_items_in_batch=None
-    ):
-        labels = inputs.get("labels")
-        outputs = model(**inputs)
-        logits = outputs.get("logits")
-        # Dynamically cast weights to the exact dtype of logits (Half or Float)
-        loss_fct = torch.nn.CrossEntropyLoss(weight=self.class_weights.to(logits.dtype))
-        loss = loss_fct(logits.view(-1, self.model.config.num_labels), labels.view(-1))
-        return (loss, outputs) if return_outputs else loss
 
 
 def main():
@@ -102,20 +79,9 @@ def main():
     train_tokenized = train_ds.map(tokenize_fn, batched=True)
     val_tokenized = val_ds.map(tokenize_fn, batched=True)
 
-    labels = [ex["label"] for ex in train_data]
-    class_weights = compute_class_weights(
-        labels, num_labels=int(cfg.get("num_labels", 3))
-    )
-    logger.info(f"Computed inverse-frequency class weights: {class_weights}")
-
     training_args = get_training_args(cfg, args.output_dir)
 
-    trainer_cls = WeightedLossTrainer if cfg.get("use_class_weights", True) else Trainer
-    trainer_kwargs = (
-        {"class_weights": class_weights} if cfg.get("use_class_weights", True) else {}
-    )
-
-    # Build compatible trainer arguments
+    # Build compatible native trainer arguments
     base_kwargs = build_trainer_kwargs(
         model=model,
         training_args=training_args,
@@ -125,7 +91,8 @@ def main():
         callbacks=[CheckpointDiskBudgetCallback(), GpuMemoryLoggingCallback()],
     )
 
-    trainer = trainer_cls(**base_kwargs, **trainer_kwargs)
+    # Directly instantiate the highly optimized native Trainer
+    trainer = Trainer(**base_kwargs)
 
     trainer.train()
     trainer.save_model(os.path.join(args.output_dir, "best_model"))
