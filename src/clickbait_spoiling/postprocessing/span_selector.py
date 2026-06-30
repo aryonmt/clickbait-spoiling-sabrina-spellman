@@ -23,14 +23,12 @@ def get_n_best_spans(
     max_answer_length: int = 64,
 ) -> List[ScoredSpan]:
     """Standard SQuAD-style n-best span extraction based on logit combinations."""
-    # Find the top n_best_size tokens by logit values
     start_indexes = np.argsort(start_logits)[-1 : -n_best_size - 1 : -1].tolist()
     end_indexes = np.argsort(end_logits)[-1 : -n_best_size - 1 : -1].tolist()
 
     candidates = []
     for start_idx in start_indexes:
         for end_idx in end_indexes:
-            # Perform essential bound and validity checks
             if start_idx >= len(offset_mapping) or end_idx >= len(offset_mapping):
                 continue
             if offset_mapping[start_idx] is None or offset_mapping[end_idx] is None:
@@ -55,7 +53,6 @@ def get_n_best_spans(
                 )
             )
 
-    # Sort candidates in descending order of score
     candidates = sorted(candidates, key=lambda x: x.score, reverse=True)
     return candidates
 
@@ -69,11 +66,9 @@ def select_best_span(
     for cand in candidates:
         if not cand.text:
             continue
-        # Apply line break constraint
         if forbid_linebreak and "\n" in cand.text:
             continue
 
-        # Apply task specific length constraints
         words = cand.text.split()
         if spoiler_type == "phrase" and len(words) > MAX_PHRASE_WORDS:
             continue

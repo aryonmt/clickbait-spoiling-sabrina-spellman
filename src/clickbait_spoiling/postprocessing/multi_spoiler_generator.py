@@ -1,84 +1,85 @@
-from dataclasses import dataclass
-from typing import List, Literal, Optional, Tuple
+import logging
+from typing import List
 
 import numpy as np
 
-from clickbait_spoiling.constants import MAX_PHRASE_WORDS, MIN_PASSAGE_WORDS
+from clickbait_spoiling.constants import MAX_MULTI_ITERATIONS, MAX_MULTI_SPOILERS
+from clickbait_spoiling.nlp.similarity import SpanSimilarityScorer
+from clickbait_spoiling.postprocessing.enumeration_spoiler_generator import (
+    generate_enumeration_spoiler,
+)
+from clickbait_spoiling.postprocessing.span_selector import get_n_best_spans
+
+logger = logging.getLogger(__name__)
 
 
-@dataclass
-class ScoredSpan:
-    text: str
-    score: float  # Combined start and end logit score
-    char_start: int
-    char_end: int
-
-
-def get_n_best_spans(
+def generate_multi_spoiler(
     start_logits: np.ndarray,
     end_logits: np.ndarray,
-    offset_mapping: List[Optional[Tuple[int, int]]],
+    offset_mapping: list,
     context: str,
-    n_best_size: int = 20,
-    max_answer_length: int = 64,
-) -> List[ScoredSpan]:
-    """Standard SQuAD-style n-best span extraction based on logit combinations."""
-    # Find the top n_best_size tokens by logit values
-    start_indexes = np.argsort(start_logits)[-1 : -n_best_size - 1 : -1].tolist()
-    end_indexes = np.argsort(end_logits)[-1 : -n_best_size - 1 : -1].tolist()
+    post_text: str,
+    article_text: str,
+    similarity_scorer: SpanSimilarityScorer,
+    similarity_threshold: float = 0.7,
+    max_iterations: int = MAX_MULTI_ITERATIONS,
+    max_spoilers: int = MAX_MULTI_SPOILERS,
+) -> List[str]:
+    """Continuous-span iterative generator with zero-out logits tracking and similarity deduplication."""
+    # 1. Attempt sequence/listicle pattern-based extraction first
+    enum_spoilers = generate_enumeration_spoiler(
+        post_text, article_text, max_items=max_spoilers
+    )
+    if enum_spoilers:
+        return enum_spoilers
 
-    candidates = []
-    for start_idx in start_indexes:
-        for end_idx in end_indexes:
-            # Perform essential bound and validity checks
-            if start_idx >= len(offset_mapping) or end_idx >= len(offset_mapping):
+    # Copy logits to safely modify token scores inside loop
+    working_start_logits = start_logits.copy()
+    working_end_logits = end_logits.copy()
+
+    spoilers: List[str] = []
+
+    for iteration in range(max_iterations):
+        if len(spoilers) >= max_spoilers:
+            break
+
+        candidates = get_n_best_spans(
+            working_start_logits,
+            working_end_logits,
+            offset_mapping,
+            context,
+            n_best_size=20,
+            max_answer_length=64,
+        )
+
+        if not candidates:
+            break
+
+        # Select highest scoring unconstrained span candidate
+        best_span = candidates[0]
+        if not best_span.text:
+            break
+
+        # Deduplicate using text-similarity scoring
+        is_duplicate = False
+        for existing in spoilers:
+            if (
+                similarity_scorer.score(best_span.text, existing)
+                >= similarity_threshold
+            ):
+                is_duplicate = True
+                break
+
+        if not is_duplicate:
+            spoilers.append(best_span.text)
+
+        # Zero out (Cover Your Tracks) overlaps
+        for k, offset in enumerate(offset_mapping):
+            if offset is None:
                 continue
-            if offset_mapping[start_idx] is None or offset_mapping[end_idx] is None:
-                continue
-            if end_idx < start_idx:
-                continue
-            if end_idx - start_idx + 1 > max_answer_length:
-                continue
+            t_start, t_end = offset[0], offset[1]
+            if max(t_start, best_span.char_start) < min(t_end, best_span.char_end):
+                working_start_logits[k] = -10000.0
+                working_end_logits[k] = -10000.0
 
-            char_start = offset_mapping[start_idx][0]
-            char_end = offset_mapping[end_idx][1]
-
-            span_text = context[char_start:char_end].strip()
-            score = float(start_logits[start_idx] + end_logits[end_idx])
-
-            candidates.append(
-                ScoredSpan(
-                    text=span_text,
-                    score=score,
-                    char_start=char_start,
-                    char_end=char_end,
-                )
-            )
-
-    # Sort candidates in descending order of score
-    candidates = sorted(candidates, key=lambda x: x.score, reverse=True)
-    return candidates
-
-
-def select_best_span(
-    candidates: List[ScoredSpan],
-    spoiler_type: Literal["phrase", "passage"],
-    forbid_linebreak: bool = True,
-) -> Optional[ScoredSpan]:
-    """Walk candidates in score order and return the first one satisfying type constraints."""
-    for cand in candidates:
-        if not cand.text:
-            continue
-        # Apply line break constraint
-        if forbid_linebreak and "\n" in cand.text:
-            continue
-
-        # Apply task specific length constraints
-        words = cand.text.split()
-        if spoiler_type == "phrase" and len(words) > MAX_PHRASE_WORDS:
-            continue
-        if spoiler_type == "passage" and len(words) < MIN_PASSAGE_WORDS:
-            continue
-
-        return cand
-    return None
+    return spoilers
