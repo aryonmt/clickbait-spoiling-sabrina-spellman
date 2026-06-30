@@ -8,7 +8,9 @@ from transformers import Trainer, TrainingArguments
 
 def get_training_args(cfg: dict, output_dir: str) -> TrainingArguments:
     """Build a transformers.TrainingArguments from a parsed YAML config dict.
-    Supports both old (evaluation_strategy) and modern (eval_strategy) transformers APIs.
+        Supports both old (evaluation_strategy) and modern (eval_strategy) transformers APIs.
+        Forces fp16 to False for DeBERTa numerical stability.
+    ```sql
     """
     eval_strategy_val = cfg.get(
         "eval_strategy", cfg.get("evaluation_strategy", "epoch")
@@ -24,7 +26,7 @@ def get_training_args(cfg: dict, output_dir: str) -> TrainingArguments:
         num_train_epochs=int(cfg.get("num_train_epochs", 3)),
         weight_decay=float(cfg.get("weight_decay", 0.01)),
         warmup_ratio=float(cfg.get("warmup_ratio", 0.06)),
-        fp16=torch.cuda.is_available() and bool(cfg.get("fp16", True)),
+        fp16=False,  # Hardcoded to False to guarantee absolute numerical stability for DeBERTa models
         save_total_limit=int(cfg.get("save_total_limit", 2)),
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
@@ -57,7 +59,6 @@ def build_trainer_kwargs(
         "eval_dataset": eval_dataset,
         "callbacks": callbacks,
     }
-    # Inspect Trainer.__init__ signature to see if modern 'processing_class' parameter is used
     sig = inspect.signature(Trainer.__init__)
     if "processing_class" in sig.parameters:
         kwargs["processing_class"] = tokenizer
