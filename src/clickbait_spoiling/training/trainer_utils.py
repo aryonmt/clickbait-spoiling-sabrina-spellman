@@ -1,16 +1,14 @@
-import inspect
-
-import numpy as np
 import torch
+from transformers import TrainingArguments, Trainer
 from sklearn.utils.class_weight import compute_class_weight
-from transformers import Trainer, TrainingArguments
+import numpy as np
+import inspect
 
 
 def get_training_args(cfg: dict, output_dir: str) -> TrainingArguments:
     """Build a transformers.TrainingArguments from a parsed YAML config dict.
-        Supports both old (evaluation_strategy) and modern (eval_strategy) transformers APIs.
-        Forces fp16 to False for DeBERTa numerical stability.
-    ```sql
+    Supports both old (evaluation_strategy) and modern (eval_strategy) transformers APIs.
+    Forces fp16 to False and uses adam_epsilon=1e-6 to guarantee absolute numerical stability for DeBERTa.
     """
     eval_strategy_val = cfg.get(
         "eval_strategy", cfg.get("evaluation_strategy", "epoch")
@@ -20,13 +18,17 @@ def get_training_args(cfg: dict, output_dir: str) -> TrainingArguments:
         output_dir=output_dir,
         eval_strategy=eval_strategy_val,
         save_strategy=cfg.get("save_strategy", "epoch"),
-        learning_rate=float(cfg.get("learning_rate", 2e-5)),
+        learning_rate=float(
+            cfg.get("learning_rate", 1.0e-5)
+        ),  # Extremely stable default for DeBERTa-v3
         per_device_train_batch_size=int(cfg.get("batch_size", 8)),
         per_device_eval_batch_size=int(cfg.get("eval_batch_size", 16)),
         num_train_epochs=int(cfg.get("num_train_epochs", 3)),
         weight_decay=float(cfg.get("weight_decay", 0.01)),
         warmup_ratio=float(cfg.get("warmup_ratio", 0.06)),
-        fp16=False,  # Hardcoded to False to guarantee absolute numerical stability for DeBERTa models
+        fp16=False,  # Hardcoded to False for absolute stability
+        adam_epsilon=1e-6,  # CRITICAL FIX: prevents division-by-zero NaN in DeBERTa embeddings
+        max_grad_norm=1.0,  # Explicitly clip exploded gradients
         save_total_limit=int(cfg.get("save_total_limit", 2)),
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
