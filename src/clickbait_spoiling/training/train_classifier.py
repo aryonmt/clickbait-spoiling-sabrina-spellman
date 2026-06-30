@@ -26,7 +26,9 @@ logger = logging.getLogger(__name__)
 
 
 class WeightedLossTrainer(Trainer):
-    """Subclass of Trainer to support class weights for imbalanced sequence classification."""
+    """Subclass of Trainer to support class weights for imbalanced sequence classification.
+    Dynamically casts weights to match logits precision to prevent multi-GPU NCCL dtype conflicts.
+    """
 
     def __init__(self, class_weights: torch.Tensor, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -38,7 +40,8 @@ class WeightedLossTrainer(Trainer):
         labels = inputs.get("labels")
         outputs = model(**inputs)
         logits = outputs.get("logits")
-        loss_fct = torch.nn.CrossEntropyLoss(weight=self.class_weights)
+        # Dynamically cast weights to the exact dtype of logits (Half or Float)
+        loss_fct = torch.nn.CrossEntropyLoss(weight=self.class_weights.to(logits.dtype))
         loss = loss_fct(logits.view(-1, self.model.config.num_labels), labels.view(-1))
         return (loss, outputs) if return_outputs else loss
 
